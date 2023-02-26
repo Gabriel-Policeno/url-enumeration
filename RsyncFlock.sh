@@ -5,11 +5,11 @@ IP="1.1.1.1"
 function espelha                                                                                                       
 {                                                                                                                      
         # ssh $IP systemctl stop docker.service                                                             
-        ssh 172.28.193.153 systemctl status docker.service                                                             
+        ssh 0.0.0.0 systemctl status docker.service                                                             
         systemctl stop docker.service                                                     
         rsync -avSH --del --exclude=postgresdata $IP:/opt/ /opt                         
-        # ssh $IP /opt/geomais/gmv2/util/restart_sig.sh                       
-        /opt/geomais/gmv2/util/restart_sig.sh
+        # ssh $IP /opt/test/restart_sig.sh                       
+        /opt/test/restart_sig.sh
         sleep 10
         emparelha.sh                                                                                                   
 }                                                                                                                      
