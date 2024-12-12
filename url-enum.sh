@@ -2,11 +2,8 @@
 
 # author: Gabriel Policeno Miranda <gabriel.policeno@outlook.com.br>
 # describe: URL enumeration
-# version: 0.1
+# version: 0.2
 # license: MIT License
-
-
-# The function banner prints version and how to use ./url-enum
 
 function banner(){
 	printf "\e[34m
@@ -15,46 +12,66 @@ function banner(){
 | | | | |_) | |     |  _| | '_ \| | | | '_   _ \ 
 | |_| |  _ <| |___  | |___| | | | |_| | | | | | |
  \___/|_| \_\_____| |_____|_| |_|\__,_|_| |_| |_|\n
- \e[32mversion: 0.1
- usage: url-enum https://www.archlinux.org; url-enum http://www.archlinux.org\n"
+ \e[32mversion: 0.2
+ usage: url-enum -u https://www.archlinux.org\n"
 }
-
-# Print help options, to explain how to use each one
 
 function full_help(){
 	printf "
-	h: Show full help
-	o: Output to file
-	O: Use together option -U to output one file for each URLs in file
-	u: URL to scan
-	U: File with many URLs
-	v: Show version\n\n"
+	Options:
+	-h: Show full help
+	-o: Output to file
+	-O: Use together with -U to output one file for each URL in file
+	-u: URL to scan
+	-U: File with many URLs
+	-v: Show version
+	
+	Examples:
+	./url-enum -u https://example.com
+	./url-enum -U urls.txt -O output_dir\n\n"
 }
 
-# under development...
-#function output_file(){}
-
-# under development...
-#function output_files(){}
-
-
+# Function to fetch URLs from a single URL
 function get_urls(){
-			wget --no-check-certificate "$2" -O /tmp/source_code
+	local url=$1
+	echo -e "\e[33m<--- Fetching URLs from: $url --->\e[0m"
+	wget --no-check-certificate "$url" -O /tmp/source_code 2>/dev/null || {
+		echo "Error: Unable to fetch $url"
+		return 1
+	}
 
-			printf "\e[33m <--- Found URL's --->\n"
-	
-			awk -F " " '{ for (i=0; i<=NF; i++) print $i }' /tmp/source_code | tr ' ' '\n' | tr '"' '\n' | tr "'" "\n" | grep \:// | sort | uniq
-	
-			rm -f /tmp/source_code
+	# Extract URLs and display them in the terminal
+	grep -Eo '(http|https)://[^"]+' /tmp/source_code | sort -u
+	rm -f /tmp/source_code
+}
 
-			return
-			}
+# Function to read URLs from a file and pass them to get_urls
+function get_urls_from_file(){
+	local file=$1
+	if [[ ! -f "$file" ]]; then
+		echo "Error: File $file not found."
+		return 1
+	fi
 
-# under development
-#function get_urls_from_file(){}
+	# For each line in the file, call get_urls passing the URL
+	while IFS= read -r url; do
+		# Check if the line is not empty
+		if [[ -n "$url" ]]; then
+			get_urls "$url"
+		fi
+	done < "$file"
+}
 
-while getopts "u:hv" OPTION
-do
+# Placeholder functions for future development
+function output_file(){
+	echo "Output to single file not implemented yet."
+}
+
+function output_files(){
+	echo "Output to multiple files not implemented yet."
+}
+
+while getopts "u:U:hov" OPTION; do
 	case "$OPTION" in
 		h) full_help
 			exit
@@ -63,14 +80,14 @@ do
 			;;
 		O) output_files
 			;;
-		u) get_urls $@
+		u) get_urls "$OPTARG"
 			;;
-		U) get_urls_from_file
+		U) get_urls_from_file "$OPTARG"
 			;;
 		v) banner
 			exit
 			;;
-		*) "Opção inválida"
+		*) echo "Invalid option."
 			exit 1
 			;;
 	esac
