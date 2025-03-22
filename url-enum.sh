@@ -1,95 +1,167 @@
 #!/usr/bin/env bash
 
-# author: Gabriel Policeno Miranda <gabriel.policeno@outlook.com.br>
-# describe: URL enumeration
-# version: 0.2
-# license: MIT License
+# ======================================
+# Advanced URL Enumeration
+# Author: Gabriel Policeno
+# License: MIT
+# ======================================
 
-function banner(){
-	printf "\e[34m
- _   _ ____  _       _____                       
-| | | |  _ \| |     | ____|_ __  _   _ _ __ ___  
-| | | | |_) | |     |  _| | '_ \| | | | '_   _ \ 
-| |_| |  _ <| |___  | |___| | | | |_| | | | | | |
- \___/|_| \_\_____| |_____|_| |_|\__,_|_| |_| |_|\n
- \e[32mversion: 0.2
- usage: url-enum -u https://www.archlinux.org\n"
+set -euo pipefail
+
+# =========[ Config ]=========
+USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+TMP_DIR="$(mktemp -d)"
+DEPTH=1
+VISITED=()
+OUTPUT_FILE=""
+COLOR=true
+
+# =========[ Utils ]=========
+color() {
+    [[ "$COLOR" == true ]] && echo -e "$1" || echo "$2"
+}
+log_info() {
+    color "\e[34m[INFO]\e[0m $1" "[INFO] $1"
+}
+log_warn() {
+    color "\e[33m[WARN]\e[0m $1" "[WARN] $1"
+}
+log_error() {
+    color "\e[31m[ERROR]\e[0m $1" "[ERROR] $1"
 }
 
-function full_help(){
-	printf "
-	Options:
-	-h: Show full help
-	-o: Output to file
-	-O: Use together with -U to output one file for each URL in file
-	-u: URL to scan
-	-U: File with many URLs
-	-v: Show version
-	
-	Examples:
-	./url-enum -u https://example.com
-	./url-enum -U urls.txt -O output_dir\n\n"
+cleanup() {
+    rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+# =========[ HTML Parsing ]=========
+extract_urls() {
+    grep -Eo 'https?://[^"'"'"'\)\>\s]+' "$1" | sort -u
 }
 
-# Function to fetch URLs from a single URL
-function get_urls(){
-	local url=$1
-	echo -e "\e[33m<--- Fetching URLs from: $url --->\e[0m"
-	wget --no-check-certificate "$url" -O /tmp/source_code 2>/dev/null || {
-		echo "Error: Unable to fetch $url"
-		return 1
-	}
-
-	# Extract URLs and display them in the terminal
-	grep -Eo '(http|https)://[^"]+' /tmp/source_code | sort -u
-	rm -f /tmp/source_code
+resolve_relative_urls() {
+    local base_url="$1"
+    local html_file="$2"
+    pup 'a attr{href}' < "$html_file" | while read -r path; do
+        [[ "$path" =~ ^https?:// ]] && echo "$path" || echo "$base_url/$path"
+    done | sort -u
 }
 
-# Function to read URLs from a file and pass them to get_urls
-function get_urls_from_file(){
-	local file=$1
-	if [[ ! -f "$file" ]]; then
-		echo "Error: File $file not found."
-		return 1
-	fi
-
-	# For each line in the file, call get_urls passing the URL
-	while IFS= read -r url; do
-		# Check if the line is not empty
-		if [[ -n "$url" ]]; then
-			get_urls "$url"
-		fi
-	done < "$file"
+# =========[ Classification ]=========
+classify_urls() {
+    while read -r url; do
+        if [[ "$url" =~ \.(jpg|png|js|css|ico|svg|woff|ttf)(\?|$) ]]; then
+            echo -e "[STATIC] $url"
+        elif [[ "$url" =~ \.(php|asp|aspx|jsp|cgi)(\?|$) ]]; then
+            echo -e "[DYNAMIC] $url"
+        elif [[ "$url" =~ \.(zip|tar|gz|rar|bak|old|backup) ]]; then
+            echo -e "[POTENTIAL BACKUP] $url"
+        elif [[ "$url" =~ \? ]]; then
+            echo -e "[PARAM] $url"
+        else
+            echo -e "[OTHER] $url"
+        fi
+    done
 }
 
-# Placeholder functions for future development
-function output_file(){
-	echo "Output to single file not implemented yet."
+# =========[ HTTP Status Checker ]=========
+check_status_codes() {
+    while read -r url; do
+        code=$(curl -s -o /dev/null -w "%{http_code}" "$url")
+        echo -e "$code $url"
+    done
 }
 
-function output_files(){
-	echo "Output to multiple files not implemented yet."
+# =========[ Main Enumerator ]=========
+fetch_page() {
+    local url="$1"
+    local out_file="$2"
+    curl -s -L -A "$USER_AGENT" --max-time 10 "$url" -o "$out_file"
 }
 
-while getopts "u:U:hov" OPTION; do
-	case "$OPTION" in
-		h) full_help
-			exit
-			;;
-		o) output_file
-			;;
-		O) output_files
-			;;
-		u) get_urls "$OPTARG"
-			;;
-		U) get_urls_from_file "$OPTARG"
-			;;
-		v) banner
-			exit
-			;;
-		*) echo "Invalid option."
-			exit 1
-			;;
-	esac
+enumerate() {
+    local url="$1"
+    local current_depth="$2"
+
+    [[ " ${VISITED[*]} " =~ " $url " ]] && return
+    VISITED+=("$url")
+
+    log_info "Fetching: $url"
+    local html_file="$TMP_DIR/page_${current_depth}.html"
+
+    if ! fetch_page "$url" "$html_file"; then
+        log_error "Failed to fetch $url"
+        return
+    fi
+
+    local urls_file="$TMP_DIR/urls_${current_depth}.txt"
+    resolve_relative_urls "$url" "$html_file" > "$urls_file"
+
+    cat "$urls_file"
+
+    if (( current_depth < DEPTH )); then
+        while read -r next_url; do
+            enumerate "$next_url" $((current_depth + 1))
+        done < "$urls_file"
+    fi
+}
+  
+# =========[ Banner & Help ]=========
+banner() {
+    color "\e[36m
+ _   _ ____  _     
+| | | |  _ \| |    
+| | | | |_) | |    
+| |_| |  _ <| |___ 
+ \___/|_| \_\_____|
+                   
+ _____                                      _   _             
+| ____|_ __  _   _ _ __ ___   ___ _ __ __ _| |_(_) ___  _ __  
+|  _| | '_ \| | | | '_ ` _ \ / _ \ '__/ _` | __| |/ _ \| '_ \ 
+| |___| | | | |_| | | | | | |  __/ | | (_| | |_| | (_) | | | |
+|_____|_| |_|\__,_|_| |_| |_|\___|_|  \__,_|\__|_|\___/|_| |_|
+    \e[0m"
+}
+
+usage() {
+    echo "Usage: $0 -u <URL> [-d depth] [-o output.txt]"
+    echo
+    echo "Options:"
+    echo "  -u <url>      Root URL to scan"
+    echo "  -d <depth>    Recursion depth (default: 1)"
+    echo "  -o <file>     Output file (optional)"
+    echo "  -n            Disable color output"
+    echo "  -h            Show help"
+    exit 1
+}
+
+# =========[ Main ]=========
+while getopts ":u:d:o:nh" opt; do
+    case $opt in
+        u) ROOT_URL="$OPTARG" ;;
+        d) DEPTH="$OPTARG" ;;
+        o) OUTPUT_FILE="$OPTARG" ;;
+        n) COLOR=false ;;
+        h) usage ;;
+        *) usage ;;
+    esac
 done
-shift "$((OPTIND-1))"
+
+[[ -z "${ROOT_URL:-}" ]] && usage
+
+banner
+
+RESULTS=$(enumerate "$ROOT_URL" 0 | sort -u)
+
+log_info "\n[+] Classifying URLs..."
+echo "$RESULTS" | classify_urls
+
+log_info "\n[+] Checking HTTP Status Codes..."
+echo "$RESULTS" | check_status_codes
+
+if [[ -n "$OUTPUT_FILE" ]]; then
+    log_info "\n[+] Saving to $OUTPUT_FILE"
+    echo "$RESULTS" > "$OUTPUT_FILE"
+fi
+
